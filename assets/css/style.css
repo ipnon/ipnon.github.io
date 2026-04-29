@@ -130,33 +130,13 @@ mjx-container[display="true"],
   margin: 1em 0 !important;
 }
 
-/* Rouge syntax highlighting */
+/* Rouge syntax highlighting — monochrome, arxiv-style */
+.highlight, .highlight * { color: inherit; }
 .highlight .k, .highlight .kd, .highlight .kn,
-.highlight .kp, .highlight .kr, .highlight .kt { color: #8959a8; }
+.highlight .kp, .highlight .kr, .highlight .kt,
+.highlight .o, .highlight .ow { font-weight: bold; }
+.highlight .c, .highlight .c1, .highlight .cm,
+.highlight .cs, .highlight .cp { font-style: italic; opacity: 0.65; }
 .highlight .s, .highlight .s1, .highlight .s2,
 .highlight .sb, .highlight .sc, .highlight .sd,
-.highlight .sh, .highlight .sx { color: #718c00; }
-.highlight .c, .highlight .c1, .highlight .cm,
-.highlight .cs, .highlight .cp { color: #8e908c; font-style: italic; }
-.highlight .nb, .highlight .bp { color: #4271ae; }
-.highlight .nf, .highlight .nc { color: #3e999f; }
-.highlight .mi, .highlight .mf, .highlight .mh,
-.highlight .mo, .highlight .il { color: #f5871f; }
-.highlight .o, .highlight .ow { color: #3e999f; }
-.highlight .nn { color: #c82829; }
-
-@media (prefers-color-scheme: dark) {
-  .highlight .k, .highlight .kd, .highlight .kn,
-  .highlight .kp, .highlight .kr, .highlight .kt { color: #c792ea; }
-  .highlight .s, .highlight .s1, .highlight .s2,
-  .highlight .sb, .highlight .sc, .highlight .sd,
-  .highlight .sh, .highlight .sx { color: #c3e88d; }
-  .highlight .c, .highlight .c1, .highlight .cm,
-  .highlight .cs, .highlight .cp { color: #676e95; font-style: italic; }
-  .highlight .nb, .highlight .bp { color: #82aaff; }
-  .highlight .nf, .highlight .nc { color: #89ddff; }
-  .highlight .mi, .highlight .mf, .highlight .mh,
-  .highlight .mo, .highlight .il { color: #f78c6c; }
-  .highlight .o, .highlight .ow { color: #89ddff; }
-  .highlight .nn { color: #ff5370; }
-}
+.highlight .sh, .highlight .sx { opacity: 0.8; }
