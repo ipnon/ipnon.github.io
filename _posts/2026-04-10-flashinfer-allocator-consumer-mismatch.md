@@ -3,7 +3,7 @@ layout: post
 title: Allocator-Consumer Mismatch in FlashInfer's CUTLASS MoE Kernels
 ---
 
-FlashInfer's `cutlass_fused_moe` is a fused Mixture-of-Experts (MoE) kernel used by vLLM, SGLang, and TensorRT-LLM for serving large MoE models. It supports multiple Nvidia architectures, but the FP8 quantization paths discussed here require SM90 (Hopper) or later. Quantization is a simple method of saving memory in numerical algorithms by mapping from a high-precision numerical domain to a low-precision one:
+FlashInfer's[^flashinfer-paper] `cutlass_fused_moe` is a fused Mixture-of-Experts (MoE) kernel used by vLLM, SGLang, and TensorRT-LLM for serving large MoE models. It supports multiple Nvidia architectures, but the FP8 quantization paths discussed here require SM90 (Hopper) or later. Quantization is a simple method of saving memory in numerical algorithms by mapping from a high-precision numerical domain to a low-precision one:
 
 $$q(x) = \mathrm{round}(x / s), \qquad \hat{x} = s \cdot q(x)$$
 
@@ -11,7 +11,7 @@ We quantize to reduce memory footprint and bandwidth, and to unlock faster low-p
 
 There are many different quantization formats, but why? And which do we pick? This is a bit out of the scope of this post, but it suffices to say that each format lives somewhere along the independent dimensions of accuracy, throughput, and memory, and choosing which to use is mostly a matter of experimentation.
 
-For the purposes of this report, we need only concern ourselves with W4A8. W4A8 is groupwise-scaled signed-INT4 weights paired with per-tensor (or per-token) FP8 E4M3 activations, computed on FP8 tensor cores with an FP32 accumulator and a fused $s_W s_A$ output rescale. See the following bit trace:
+For the purposes of this report, we need only concern ourselves with W4A8.[^awq] W4A8 is groupwise-scaled signed-INT4 weights paired with per-tensor (or per-token) FP8 E4M3 activations, computed on FP8 tensor cores with an FP32 accumulator and a fused $s_W s_A$ output rescale. See the following bit trace:
 
 ```asm
 0. Pack the weights into memory before inference.
@@ -62,6 +62,8 @@ For the purposes of this report, we need only concern ourselves with W4A8. W4A8 
 8. Store the byte back to memory. (note d)
   [1][1001][000] = 0xC8
 ```
+
+Expansions for the labelled notes follow at the end of the post.[^note-a][^note-b][^note-c][^note-d]
 
 And the same in CUDA:
 
@@ -137,7 +139,7 @@ $$
 2^5 = 32 \text{ combinations}, \qquad 5 \times 4 = 20 \text{ sites to miss a case}
 $$
 
-Both the allocator and the consumer need to agree on the quantization scheme or the behavior will be undefined. In our case, FlashInfer has two relevant functions: `getProfilerWorkspaces()` and `prepareQuantParams()`. The former computes how much memory is needed for the scale buffers, such as `s_W` and `s_A` in our example, and this is called a workspace. The latter reads pointers out of the workspace based on the supposedly agreed on quantization scheme. Apparently when the W4A8 scheme was added, `prepareQuantParams()` was updated to include `kUINT8` as a valid packing format, but `getProfilerWorkspaces()` was not. Suffice to say the code is complicated, the weight data type classification and cascade will be briefly summarized here:
+Both the allocator and the consumer need to agree on the quantization scheme or the behavior will be undefined.[^issue] In our case, FlashInfer has two relevant functions: `getProfilerWorkspaces()` and `prepareQuantParams()`. The former computes how much memory is needed for the scale buffers, such as `s_W` and `s_A` in our example, and this is called a workspace. The latter reads pointers out of the workspace based on the supposedly agreed on quantization scheme. Apparently when the W4A8 scheme was added, `prepareQuantParams()` was updated to include `kUINT8` as a valid packing format, but `getProfilerWorkspaces()` was not. Suffice to say the code is complicated, the weight data type classification and cascade will be briefly summarized here:
 
 ```cpp
 // getProfilerWorkspaces() — allocator side
@@ -161,7 +163,7 @@ The workspace allocator isn't naive to `kUINT8`, it's just that it was only adde
 bool is_wfp4a16_quant = (wtype == kUINT8) && (atype == kHALF || atype == kBF16);
 ```
 
-Note that the activation type for W4A8, E4M3, is nowhere to be found. The fix is to add `kUINT8` as a matchable quantization type at the previously mentioned sites:
+Note that the activation type for W4A8, E4M3, is nowhere to be found. The fix is to add `kUINT8` as a matchable quantization type at the previously mentioned sites:[^pr]
 
 ```cpp
 // getProfilerWorkspaces() — after fix
@@ -185,45 +187,22 @@ size_t dtype_bytes             = (wtype == kINT4 || wtype == kUINT8) ? ... : ...
 
 A natural question to ask for any error is why it wasn't found. In this case, the default kernel configuration in FlashInfer uses an entirely different allocator: `CutlassMoeFCRunner::getWorkspaceDeviceBufferSizes()`. Only when autotuning is enabled do we use the allocator `GemmProfilerBackend::getProfilerWorkspaces()`. It stands to reason that the other allocator has been working just fine, or was fixed earlier, as most people aren't autotuning. It takes a long time to compile. And there are several other quantization schemes to use other way. It takes a while for someone to need autotuning and W4A8 specifically at the same time.
 
-A separate issue is that a dispatch table has measurable overhead, and FlashInfer's main selling point is that it's fast (it's not called BangInfer). It's evidently not worth it to write a dispatch table if it cuts into performance at any measurable amount.
+A separate issue is that a dispatch table has measurable overhead, and FlashInfer's main selling point is that it's fast (it's not called BangInfer). It's evidently not worth it to write a dispatch table if it cuts into performance at any measurable amount. The kernel itself is built on NVIDIA's CUTLASS templates.[^cutlass]
 
-## Notes
+[^note-a]: Note (a). *4-bit two's complement* means you have 1 sign bit and 3 magnitude bits. A simple way to think of it is that setting each bit contributes the corresponding integer to the overall sum in this array: `[-8, 4, 2, 1]`, where `-8` is referred to as the "minimum representable value". An occasionally useful property of this format is that you can apply the composition of the bitwise-not function and plus-one function to negate any number: `3 = 0b0011`; `(~)(0b0011) = 0b1100`; `(+1)(0b1100) = 0b1101 = -3`; and applying the same composition again yields `0b0011 = 3`.
 
-a. *4-bit two's complement* means you have 1 sign bit and 3 magnitude bits. A simple way to think of it is that setting each bit contributes the corresponding integer to the overall sum in this array: `[-8, 4, 2, 1]`, where `-8` is referred to as the "minimum representable value". An occasionally useful property of this format is that you can apply the composition of the bitwise-not function and plus-one function to negate any number:
+[^note-b]: Note (b). *FP8 E4M3* means you have 1 sign bit, 4 exponent bits and 3 mantissa bits: `[S][E3 E2 E1 E0][M2 M1 M0]`. The bias is 7, which means to find the actual exponent we subtract 7 from the value of the exponent bits. An implicit leading 1 is prepended to the mantissa; a simple way to think of it is that setting each bit adds the corresponding term of the geometric sequence $2^{-i}$ to the rational $1 = 2^0$: `[1/2, 1/4, 1/8]`. We compute every value as $(-1)^S \cdot 2^{\text{Exp} - 7} \cdot (1 + M/8)$. For example, `[1][1000][110]` is $(-1)^1 \cdot 2^{8-7} \cdot (1 + 1/2 + 1/4) = -3.5$.
 
-```asm
-3 = 0b0011
-(~)(0b0011) = 0b1100
-(+1)(0b1100) = 0b1101
--3 = 0b1101
-(~)(0b1101) = 0b0010
-(+1)(0b0010) = 0b0011
-3 = 0b0011
-```
+[^note-c]: Note (c). The astute reader will note that this step is unnecessary on any device supporting FP8 MMA, which is ~10% of deployed devices as of writing. We promote to FP32 for purposes of pedagogy.
 
-b. *FP8 E4M3* means you have 1 sign bit, 4 exponent bits and 3 mantissa bits: `[S][E3 E2 E1 E0][M2 M1 M0]`. The bias is 7, which means to find the actual exponent we subtract 7 from the value of the exponent bits. An implicit leading 1 is prepended to the mantissa; a simple way to think of it is that setting each bit adds the corresponding term of the geometric sequence 2^(-i) to the rational 1 = 2^0: `[1/2, 1/4, 1/8]`. We compute every value as (-1)^S * 2^(Exp - 7) * (1 + M/8). Consider the following example:
+[^note-d]: Note (d). This is a single step in what would continue over the entire K dimension. A tutorial on the entire process can be found at [siboehm.com/articles/22/CUDA-MMM](https://siboehm.com/articles/22/CUDA-MMM).
 
-```asm
-[1][1000][110]
-S  Exp   Man 
-S = 1 -> negative
-Exp = 0b1000 = 8, bias = 7 -> 8 - 7 = 1 = exponent
-Man = 0b110 -> 1 (implicit leading 1) + 0.5 + 0.25 = 1.75 = significand
-(-1)^1 * 2^1 * 1.75 = -3.5
-```
+[^issue]: Issue [flashinfer-ai/flashinfer#2501](https://github.com/flashinfer-ai/flashinfer/issues/2501).
 
-c. The astute reader will note that this step is unnecessary on any device supporting FP8 MMA, which is ~10% of deployed devices as of writing. We promote to FP32 for purposes of pedagogy.
+[^pr]: Fix in [flashinfer-ai/flashinfer#2564](https://github.com/flashinfer-ai/flashinfer/pull/2564).
 
-d. This is a single step in what would continue over the entire K dimension. A tutorial on the entire process can be found at https://siboehm.com/articles/22/CUDA-MMM.
+[^awq]: Lin et al., ["AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration"](https://arxiv.org/abs/2306.00978) (MLSys 2024).
 
-## References
+[^cutlass]: NVIDIA, [`examples/24_gemm_grouped/gemm_grouped.cu`](https://github.com/NVIDIA/cutlass/blob/main/examples/24_gemm_grouped/gemm_grouped.cu) and [`include/cutlass/gemm/device/gemm_grouped.h`](https://github.com/NVIDIA/cutlass/blob/main/include/cutlass/gemm/device/gemm_grouped.h).
 
-0. [flashinfer-ai/flashinfer#2564](https://github.com/flashinfer-ai/flashinfer/pull/2564).
-
-1. [flashinfer-ai/flashinfer#2501](https://github.com/flashinfer-ai/flashinfer/issues/2501).
-
-2. Lin et al., [AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration](https://arxiv.org/abs/2306.00978).
-
-3. NVIDIA, [`examples/24_gemm_grouped/gemm_grouped.cu`](https://github.com/NVIDIA/cutlass/blob/main/examples/24_gemm_grouped/gemm_grouped.cu) and [`include/cutlass/gemm/device/gemm_grouped.h`](https://github.com/NVIDIA/cutlass/blob/main/include/cutlass/gemm/device/gemm_grouped.h).
-
-4. Ye et al., [FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving](https://arxiv.org/abs/2501.01005).
+[^flashinfer-paper]: Ye et al., ["FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving"](https://arxiv.org/abs/2501.01005).

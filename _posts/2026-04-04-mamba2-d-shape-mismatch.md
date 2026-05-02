@@ -55,7 +55,7 @@ else:
     D = repeat(self.D, "h -> h p", p=self.headdim)
 ```
 
-Now how did this bug occur? Why wasn't it found sooner? First and most important is that PyTorch will broadcast nearly anything, and it will not inform you when dimensions don't align. Secondly, $D$ is initialized to all 1s by default with `torch.ones`. Note that $1 \cdot x = x$ no matter which dimension we have for $x$. Any test using default initialization would pass, because you need non-uniform $D$ values to expose the mismatch.
+Now how did this bug occur? Why wasn't it found sooner?[^issues] First and most important is that PyTorch will broadcast nearly anything, and it will not inform you when dimensions don't align. Secondly, $D$ is initialized to all 1s by default with `torch.ones`. Note that $1 \cdot x = x$ no matter which dimension we have for $x$. Any test using default initialization would pass, because you need non-uniform $D$ values to expose the mismatch.
 
 We can test correctness by creating a Mamba2 model, randomizing $D$, and check that both `forward()` and `step()` produce matching outputs for both hyperparameter settings:
 
@@ -77,8 +77,7 @@ for t in range(seqlen):
 assert torch.allclose(out_fwd_tail, out_step_tail, rtol=1e-3, atol=1e-3)
 ```
 
-## References
+The fix landed in [PR #893](https://github.com/state-spaces/mamba/pull/893).[^pr]
 
-- [PR #893: Fix Mamba2 step() D handling when D_has_hdim=True](https://github.com/state-spaces/mamba/pull/893)
-- [Issue #887: Mamba2.step() handles D incorrectly when D_has_hdim=True](https://github.com/state-spaces/mamba/issues/887)
-- [Issue #888: Mamba2 step() silent misbehavior with D_has_hdim=True](https://github.com/state-spaces/mamba/issues/888)
+[^issues]: Originally reported in [Issue #887: Mamba2.step() handles D incorrectly when D_has_hdim=True](https://github.com/state-spaces/mamba/issues/887) and [Issue #888: Mamba2 step() silent misbehavior with D_has_hdim=True](https://github.com/state-spaces/mamba/issues/888).
+[^pr]: [PR #893: Fix Mamba2 step() D handling when D_has_hdim=True](https://github.com/state-spaces/mamba/pull/893).
