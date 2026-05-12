@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Insertion-Coupled Endpoint Reclaim in Mooncake's RDMA Transport
+title: 'Mooncake''s RDMA QP Leak: A Drain-Coupling Pathology'
 ---
 
 Mooncake is the production serving platform for Moonshot AI's[^moonshot] Kimi.[^kimi] Its Transfer Engine handles Remote Direct Memory Access (RDMA) data movement between prefill and decode clusters. One `RdmaContext` exists per NIC. Each `RdmaContext` owns an `EndpointStore`: a software cache of `RdmaEndPoint` objects keyed on peer Network Interface Controller (NIC) path, bounded in size by `max_endpoints`. Each `RdmaEndPoint` allocates `num_qp_per_ep` Queue Pairs (QPs) at construction with `ibv_create_qp`, and releases them with `ibv_destroy_qp` from its destructor.[^rdma]

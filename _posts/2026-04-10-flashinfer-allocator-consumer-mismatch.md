@@ -1,6 +1,6 @@
 ---
 layout: post
-title: Allocator-Consumer Mismatch in FlashInfer's CUTLASS MoE Kernels
+title: An Allocator–Consumer Mismatch Crashes FlashInfer's W4A8 Autotune
 ---
 
 FlashInfer's[^flashinfer-paper] `cutlass_fused_moe` is a fused Mixture-of-Experts (MoE) kernel used by vLLM, SGLang, and TensorRT-LLM for serving large MoE models. It supports multiple Nvidia architectures, but the FP8 quantization paths discussed here require SM90 (Hopper) or later. Quantization is a simple method of saving memory in numerical algorithms by mapping from a high-precision numerical domain to a low-precision one:
