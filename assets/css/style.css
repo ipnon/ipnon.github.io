@@ -136,8 +136,17 @@ mjx-container[display="true"],
   overflow-x: auto;
 }
 .tikz-figure svg {
-  max-width: 100%;
+  width: 100%;
   height: auto;
+  max-width: 100%;
+}
+.tikz-figure .caption {
+  font-size: 0.9rem;
+  font-style: italic;
+  color: var(--text-secondary);
+  margin-top: 0.6em;
+  text-align: center;
+  text-wrap: balance;
 }
 @media (prefers-color-scheme: dark) {
   .tikz-figure svg { filter: invert(0.92) hue-rotate(180deg); }

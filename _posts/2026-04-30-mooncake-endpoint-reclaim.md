@@ -1,67 +1,48 @@
 ---
 layout: post
-title: 'Mooncake''s RDMA QP Leak: A Drain-Coupling Pathology'
+title: 'Mooncake''s RDMA QP Leak: Drain-Coupling Pathology'
 ---
 
 <div class="tikz-figure">
 <script type="text/tikz">
 \usetikzlibrary{arrows.meta,positioning,fit,calc}
 \begin{tikzpicture}[
-  >={Stealth[length=2mm]},
+  >={Stealth[length=2.5mm, inset=0.5mm]},
   font=\small,
-  box/.style={draw, align=center, inner sep=4pt, rounded corners=1pt},
+  box/.style={draw, align=center, inner sep=5pt, rounded corners=1pt, minimum height=11mm},
   smbox/.style={box, font=\footnotesize},
-  edgelbl/.style={font=\scriptsize, fill=white, inner sep=1.5pt},
-  edgelblc/.style={edgelbl, align=center},
+  edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\node[smbox, align=left] (upstream) at (0, 8.2) {
-  SGLang PD-disagg: \texttt{batchTransferSync()} fails $\Rightarrow$ Python marks session failed; \\
-  \texttt{handle\_map\_} stays cached, \texttt{closeSegment} is no-op $\Rightarrow$ peer's insertions stop
-};
-\node[smbox] (del) at (-5.5, 5) {\texttt{deleteEndpoint(peer)} \\ \emph{error path}};
-\node[smbox] (miss) at (0, 5) {\texttt{RdmaContext::endpoint(peer)} \\ \emph{cache-miss path}};
-\node[smbox, line width=0.8pt] (mon) at (5.5, 5) {\texttt{WorkerPool::monitorWorker} \\ \emph{1\,Hz heartbeat, NUMA-pinned} \\ {\scriptsize \texttt{worker\_pool.cpp:447--451}}};
-\node[box] (map) at (-3, 2) {
-  \texttt{endpoint\_map\_} \\
-  {\footnotesize \texttt{unordered\_map<string,}} \\
-  {\footnotesize \texttt{shared\_ptr<RdmaEndPoint>>}}
-};
-\node[box] (wait) at (3, 2) {
-  \texttt{waiting\_list\_} \\
-  {\footnotesize \texttt{unordered\_set<}} \\
-  {\footnotesize \texttt{shared\_ptr<RdmaEndPoint>>}} \\
-  {\footnotesize + atomic \texttt{waiting\_list\_len\_}}
-};
-\node[box, minimum width=120mm] (nic) at (0, -2) {
-  NIC hardware QP pool ($\sim$64K slots) \\
-  {\footnotesize finite, NIC-scope; exhaustion blast radius is the whole NIC, not the failing peer}
-};
-\node[box, dashed, align=left, font=\footnotesize] (fail) at (9.5, 2) {
-  Pre-fix failure mode: \\
+\useasboundingbox (-9.5, -5.5) rectangle (15.5, 5.5);
+\node[smbox] (del)  at (-7, 4) {\texttt{deleteEndpoint(peer)} \\ \emph{error path}};
+\node[smbox] (miss) at ( 0, 4) {\texttt{RdmaContext::endpoint(peer)} \\ \emph{cache-miss path}};
+\node[smbox] (mon)  at ( 7, 4) {\texttt{monitorWorker} \\ \emph{1\,Hz tick, no reclaim call}};
+\node[box] (map)  at (-3.5, 0.5) {\texttt{endpoint\_map\_}};
+\node[box] (wait) at ( 3.5, 0.5) {\texttt{waiting\_list\_}};
+\node[box, minimum width=170mm] (nic) at (0, -3.5) {NIC hardware QP pool ($\sim$64K slots, finite)};
+\node[smbox, dashed, align=left] (fail) at (12, 0.5) {
+  failure mode: \\
   \quad inserts stall (peer dead) \\
   \quad evict/delete keep firing \\
   \quad reclaim never invoked \\
-  \quad \texttt{waiting\_list\_} grows \\
-  \quad 1118 evicts $\Rightarrow$ \\
-  \quad\quad {>}20K QPs per NIC \\
-  \quad \texttt{ibv\_create\_qp} returns \\
-  \quad\quad \texttt{ENOMEM} NIC-wide
+  \quad \texttt{waiting\_list\_} unbounded \\
+  \quad 1118 evicts $\Rightarrow$ {>}20K QPs \\
+  \quad \texttt{ENOMEM} NIC-wide
 };
-\node[draw, dotted, fit=(map)(wait), inner sep=12pt] (store) {};
-\node[font=\footnotesize, anchor=south west] at ([xshift=2pt]store.north west) {EndpointStore (FIFO or SIEVE), \texttt{RWSpinlock endpoint\_map\_lock\_}};
-\node[draw, dashed, fit=(del)(miss)(mon)(store), inner sep=12pt] (ctx) {};
-\node[font=\footnotesize, anchor=south west] at ([xshift=2pt]ctx.north west) {RdmaContext (one per NIC)};
-\draw[->, dotted] (upstream.south) -- (miss.north);
-\draw[->] (del.south) -- (store.north west) node[edgelbl, midway, sloped] {moves entry to \texttt{waiting\_list\_}};
-\draw[->] (miss) -- (map) node[edgelbl, midway, sloped] {1.~\texttt{insertEndpoint}};
-\draw[->, dashed] (miss) -- (wait) node[edgelblc, midway, sloped] {2.~\texttt{reclaimEndpoint} \\ \emph{only pre-fix caller}};
-\draw[->] (map) -- (wait) node[edgelbl, midway] {evict (FIFO/SIEVE)};
-\draw[->, line width=0.8pt] (mon) to[bend right=10] node[edgelblc, midway, sloped] {\textbf{fix}: \texttt{reclaimEndpoints} \\ \emph{every 1\,s}} (wait);
-\draw[->] (map.south) -- (map.south |- nic.north) node[edgelbl, midway] {\texttt{ibv\_create\_qp} $\times$ \texttt{num\_qp\_per\_ep}};
-\draw[->] (wait.south) -- (wait.south |- nic.north) node[edgelbl, midway] {dtor $\Rightarrow$ \texttt{ibv\_destroy\_qp}};
-\draw[->, dotted] (wait.east) to[bend left=15] (fail.west);
+\node[draw, dotted, fit=(map)(wait), inner sep=14pt] (store) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]store.north west) {EndpointStore};
+\node[draw, dashed, fit=(del)(miss)(mon)(store), inner sep=14pt] (ctx) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]ctx.north west) {RdmaContext (one per NIC)};
+\draw[->] (del) -- (store.north west) node[edgelbl, midway, sloped, above] {move to \texttt{waiting\_list\_}};
+\draw[->] (miss) -- (map) node[edgelbl, pos=0.55, sloped, above] {1.~\texttt{insertEndpoint}};
+\draw[->, dashed] (miss) -- (wait) node[edgelbl, pos=0.55, sloped, above] {2.~\texttt{reclaimEndpoint}};
+\draw[->] (map) -- (wait) node[edgelbl, midway, above] {evict (FIFO/SIEVE)};
+\draw[->] (map.south) -- (map.south |- nic.north) node[edgelbl, midway, right] {\texttt{ibv\_create\_qp} $\times$ \texttt{num\_qp\_per\_ep}};
+\draw[->, dashed] (wait.south) -- (wait.south |- nic.north) node[edgelbl, midway, right] {dtor (rarely fires)};
+\draw[->, dotted] (wait.east) -- (fail.west);
 \end{tikzpicture}
 </script>
+<div class="caption"><b>Figure 1.</b> Pre-fix state. Reclaim runs only as a sequel to <code>insertEndpoint</code>. Under peer failure the insertion path stalls while evict and delete continue to feed <code>waiting_list_</code>, so QPs accumulate against the NIC pool until <code>ibv_create_qp</code> returns <code>ENOMEM</code> for every caller on the NIC.</div>
 </div>
 
 Mooncake is the production serving platform for Moonshot AI's[^moonshot] Kimi.[^kimi] Its Transfer Engine handles Remote Direct Memory Access (RDMA) data movement between prefill and decode clusters. One `RdmaContext` exists per NIC. Each `RdmaContext` owns an `EndpointStore`: a software cache of `RdmaEndPoint` objects keyed on peer Network Interface Controller (NIC) path, bounded in size by `max_endpoints`. Each `RdmaEndPoint` allocates `num_qp_per_ep` Queue Pairs (QPs) at construction with `ibv_create_qp`, and releases them with `ibv_destroy_qp` from its destructor.[^rdma]
@@ -146,6 +127,39 @@ There are two valid alternatives to this pattern:
 2. **Direct destruction-path drive**: an eager cleanup call from the destruction call site itself that doesn't batch on creation.
 
 The first fits when destruction must be deferred. Mooncake has outstanding raw pointer hazards with `wr_depth_list_`. The second fits when destruction can be synchronous. An earlier failed solution attempted this with an eager `disconnect()` from both `evictEndpoint()` and `deleteEndpoint()`, but it crashed under multi-process `rxe` with `malloc(): unaligned tcache chunk detected` within a few seconds. `slice->rdma.qp_depth` is a raw pointer into `wr_depth_list_` and eager destruction races against slice work in progress. A shared ownership refactor of `wr_depth_list_` would correctly handle this but was outside the scope of this work.
+
+<div class="tikz-figure">
+<script type="text/tikz">
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\begin{tikzpicture}[
+  >={Stealth[length=2.5mm, inset=0.5mm]},
+  font=\small,
+  box/.style={draw, align=center, inner sep=5pt, rounded corners=1pt, minimum height=11mm},
+  smbox/.style={box, font=\footnotesize},
+  edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
+]
+\useasboundingbox (-9.5, -5.5) rectangle (15.5, 5.5);
+\node[smbox] (del)  at (-7, 4) {\texttt{deleteEndpoint(peer)} \\ \emph{error path}};
+\node[smbox] (miss) at ( 0, 4) {\texttt{RdmaContext::endpoint(peer)} \\ \emph{cache-miss path}};
+\node[smbox, line width=0.8pt] (mon) at ( 7, 4) {\texttt{monitorWorker} \\ \emph{1\,Hz tick, calls \texttt{reclaimEndpoints}}};
+\node[box] (map)  at (-3.5, 0.5) {\texttt{endpoint\_map\_}};
+\node[box] (wait) at ( 3.5, 0.5) {\texttt{waiting\_list\_}};
+\node[box, minimum width=170mm] (nic) at (0, -3.5) {NIC hardware QP pool ($\sim$64K slots, finite)};
+\node[draw, dotted, fit=(map)(wait), inner sep=14pt] (store) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]store.north west) {EndpointStore};
+\node[draw, dashed, fit=(del)(miss)(mon)(store), inner sep=14pt] (ctx) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]ctx.north west) {RdmaContext (one per NIC)};
+\draw[->] (del) -- (store.north west) node[edgelbl, midway, sloped, above] {move to \texttt{waiting\_list\_}};
+\draw[->] (miss) -- (map) node[edgelbl, pos=0.55, sloped, above] {1.~\texttt{insertEndpoint}};
+\draw[->] (miss) -- (wait) node[edgelbl, pos=0.55, sloped, above] {2.~\texttt{reclaimEndpoint}};
+\draw[->] (map) -- (wait) node[edgelbl, midway, above] {evict (FIFO/SIEVE)};
+\draw[->, line width=0.8pt] (mon) -- (wait) node[edgelbl, pos=0.55, sloped, above] {\textbf{fix}: \texttt{reclaimEndpoints} (1\,Hz)};
+\draw[->] (map.south) -- (map.south |- nic.north) node[edgelbl, midway, right] {\texttt{ibv\_create\_qp} $\times$ \texttt{num\_qp\_per\_ep}};
+\draw[->] (wait.south) -- (wait.south |- nic.north) node[edgelbl, midway, right] {dtor $\Rightarrow$ \texttt{ibv\_destroy\_qp}};
+\end{tikzpicture}
+</script>
+<div class="caption"><b>Figure 2.</b> Post-fix state. <code>monitorWorker</code>'s existing 1&nbsp;Hz heartbeat now also calls <code>reclaimEndpoints</code>, draining <code>waiting_list_</code> independent of insertion traffic. The pathological coupling is gone; the waiting list drains every cycle regardless of failure load.</div>
+</div>
 
 [^numa]: Modern multi-socket servers have NICs attached via PCIe (Peripheral Component Interconnect Express) to a specific CPU socket. Memory accesses from threads running on other sockets cross the inter-socket interconnect. This pays a latency cost and contends for limited cross-socket bandwidth. NUMA (Non-Uniform Memory Access) solves this problem by pinning the per-NIC worker to its NUMA-local socket with `bindToSocket(numa_socket_id_)`. This keeps both the thread's stack and its accesses to `RdmaContext` and `EndpointStore` state in the local memory bank. For background, see Christoph Lameter, ["NUMA (Non-Uniform Memory Access): An Overview"](https://queue.acm.org/detail.cfm?id=2513149).
 
