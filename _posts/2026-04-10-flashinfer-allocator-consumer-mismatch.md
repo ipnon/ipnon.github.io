@@ -3,6 +3,54 @@ layout: post
 title: 'Allocator–Consumer Mismatch Crashes FlashInfer''s W4A8 Autotune'
 ---
 
+<div class="tikz-figure">
+<script type="text/tikz">
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\begin{tikzpicture}[
+  >={Stealth[length=2.5mm, inset=0.5mm]},
+  font=\small,
+  box/.style={draw, align=center, inner sep=5pt, rounded corners=1pt, minimum height=11mm},
+  smbox/.style={box, font=\footnotesize},
+  edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
+]
+\useasboundingbox (-11, -6) rectangle (15, 6);
+\node[smbox, align=center] (tune) at (-8.5, 4.5) {\texttt{with autotune():} \\ \emph{tactic search}};
+\node[smbox, align=center] (prep) at (-8.5, 0.5) {\texttt{GemmProfilerBackend} \\ \texttt{::prepare()}};
+\node[smbox, dashed, align=left] (alloc) at (-2, 4.5) {\texttt{getProfilerWorkspaces()} \emph{(allocator)} \\ \texttt{wtype == kUINT8}, \texttt{mGroupSize > 0} \\[2pt]
+  \texttt{is\_int\_w\_quant} \hfill $=$ \texttt{kINT8}\,$\lor$\,\texttt{kINT4} \\
+  \texttt{is\_int\_groupwise\_w\_quant} \hfill $=$ \texttt{kINT8}\,$\lor$\,\texttt{kINT4} \\
+  \texttt{dtype\_bytes} ternary \hfill $=$ \texttt{kINT4} only \\[2pt]
+  \emph{all three evaluate} \texttt{false} \emph{for} \texttt{kUINT8}};
+\node[smbox, align=left] (cascade) at (-2, 0.5) {\emph{cascade}: \\
+  \texttt{is\_w4afp8\_quant} $=$ \texttt{false} \\
+  \texttt{w4a8\_alpha\_size} $=$ \texttt{0} \\
+  \texttt{ADD(w4a8\_alpha)} $\Rightarrow$ \emph{0-byte slot}};
+\node[box, align=left] (wsmap) at (6, 4.5) {\texttt{workspace\_map} \\ \texttt{\{\,...\,, "w4a8\_alpha" $\mapsto$ (0,\,0)\,\}}};
+\node[smbox, align=center] (consume) at (6, 0.5) {\texttt{prepareQuantParams()} \emph{(consumer)} \\ \texttt{GET\_WS\_PTR(float const*,} \\ \texttt{w4a8\_alpha)} $\Rightarrow$ \texttt{nullptr}};
+\node[box, align=center, line width=0.6pt] (assert) at (6, -3.5) {\texttt{cutlass\_fused\_moe\_kernels.cuh:4530} \\ \texttt{TLLM\_CHECK(quant\_1 \&\& quant\_2)} $\;\Rightarrow\;$ \texttt{RuntimeError}};
+\node[smbox, dashed, align=left] (haz) at (12, 4.5) {hazard: \\
+  \quad \texttt{wtype = kUINT8} \\
+  \quad (W4A8 packs INT4 pairs) \\
+  \quad allocator sees only \texttt{kINT4} \\
+  \quad zero-byte alpha buffer \\
+  \quad consumer dereferences \texttt{nullptr} \\
+  \quad assert fires only under \texttt{autotune()}};
+\node[draw, dotted, fit=(alloc)(cascade), inner sep=10pt] (gpwbody) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]gpwbody.north west) {\texttt{GemmProfilerBackend::getProfilerWorkspaces()}};
+\node[draw, dashed, fit=(prep)(gpwbody)(wsmap)(consume), inner sep=14pt] (backend) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]backend.north west) {\texttt{GemmProfilerBackend} \emph{(autotune-only path)}};
+\draw[->] (tune) -- (prep) node[edgelbl, midway, right] {\texttt{tuner.choose\_one}};
+\draw[->] (prep.east) -- (alloc.west) node[edgelbl, midway, above] {1.~size workspace};
+\draw[->] (alloc) -- (cascade) node[edgelbl, midway, right] {boolean cascade};
+\draw[->] (cascade.east) -- (wsmap.south west) node[edgelbl, pos=0.55, sloped, above] {\texttt{ADD(...)} entries};
+\draw[->, dashed] (wsmap) -- (consume) node[edgelbl, midway, right] {\texttt{GET\_WS\_PTR} $\Rightarrow$ \texttt{nullptr}};
+\draw[->, dashed] (consume) -- (assert) node[edgelbl, midway, right] {pass \texttt{quant\_1}, \texttt{quant\_2}};
+\draw[->, dotted] (alloc.east) to[bend left=12] (haz.west);
+\end{tikzpicture}
+</script>
+<div class="caption"><b>Figure 1.</b> Pre-fix state. Under <code>autotune()</code>, <code>getProfilerWorkspaces()</code> checks <code>kINT8</code> and <code>kINT4</code> at three sites but never <code>kUINT8</code>, so W4A8's packed-INT4 weight type falls through, the cascade collapses <code>w4a8_alpha</code> to a zero-byte slot, and <code>prepareQuantParams()</code> dereferences a <code>nullptr</code> that trips the <code>quant_1 &amp;&amp; quant_2</code> assertion at <code>cutlass_fused_moe_kernels.cuh:4530</code>.</div>
+</div>
+
 FlashInfer's[^flashinfer-paper] `cutlass_fused_moe` is a fused Mixture-of-Experts (MoE) kernel used by vLLM, SGLang, and TensorRT-LLM for serving large MoE models. It supports multiple Nvidia architectures, but the FP8 quantization paths discussed here require SM90 (Hopper) or later. Quantization is a simple method of saving memory in numerical algorithms by mapping from a high-precision numerical domain to a low-precision one:
 
 $$q(x) = \mathrm{round}(x / s), \qquad \hat{x} = s \cdot q(x)$$
@@ -188,6 +236,46 @@ size_t dtype_bytes             = (wtype == kINT4 || wtype == kUINT8) ? ... : ...
 A natural question to ask for any error is why it wasn't found. In this case, the default kernel configuration in FlashInfer uses an entirely different allocator: `CutlassMoeFCRunner::getWorkspaceDeviceBufferSizes()`. Only when autotuning is enabled do we use the allocator `GemmProfilerBackend::getProfilerWorkspaces()`. It stands to reason that the other allocator has been working just fine, or was fixed earlier, as most people aren't autotuning. It takes a long time to compile. And there are several other quantization schemes to use other way. It takes a while for someone to need autotuning and W4A8 specifically at the same time.
 
 A separate issue is that a dispatch table has measurable overhead, and FlashInfer's main selling point is that it's fast (it's not called BangInfer). It's evidently not worth it to write a dispatch table if it cuts into performance at any measurable amount. The kernel itself is built on NVIDIA's CUTLASS templates.[^cutlass]
+
+<div class="tikz-figure">
+<script type="text/tikz">
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\begin{tikzpicture}[
+  >={Stealth[length=2.5mm, inset=0.5mm]},
+  font=\small,
+  box/.style={draw, align=center, inner sep=5pt, rounded corners=1pt, minimum height=11mm},
+  smbox/.style={box, font=\footnotesize},
+  edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
+]
+\useasboundingbox (-11, -6) rectangle (15, 6);
+\node[smbox, align=center] (tune) at (-8.5, 4.5) {\texttt{with autotune():} \\ \emph{tactic search}};
+\node[smbox, align=center] (prep) at (-8.5, 0.5) {\texttt{GemmProfilerBackend} \\ \texttt{::prepare()}};
+\node[smbox, line width=0.8pt, align=left] (alloc) at (-2, 4.5) {\texttt{getProfilerWorkspaces()} \emph{(allocator)} \\ \texttt{wtype == kUINT8}, \texttt{mGroupSize > 0} \\[2pt]
+  \texttt{is\_int\_w\_quant} \hfill $=$ \texttt{kINT8}\,$\lor$\,\texttt{kINT4}\,$\lor$\,\textbf{\texttt{kUINT8}} \\
+  \texttt{is\_int\_groupwise\_w\_quant} \hfill $=$ \texttt{kINT8}\,$\lor$\,\texttt{kINT4}\,$\lor$\,\textbf{\texttt{kUINT8}} \\
+  \texttt{dtype\_bytes} ternary \hfill $=$ \texttt{kINT4}\,$\lor$\,\textbf{\texttt{kUINT8}} \\[2pt]
+  \emph{groupwise branch matches} \texttt{kUINT8}};
+\node[smbox, align=left] (cascade) at (-2, 0.5) {\emph{cascade}: \\
+  \texttt{is\_w4afp8\_quant} $=$ \texttt{true} \\
+  \texttt{w4a8\_alpha\_size} $=$ \texttt{num\_experts\_per\_node}\,$\cdot$\,\texttt{sizeof(float)} \\
+  \texttt{ADD(w4a8\_alpha)} $\Rightarrow$ \emph{real buffer}};
+\node[box, align=left] (wsmap) at (6, 4.5) {\texttt{workspace\_map} \\ \texttt{\{\,...\,, "w4a8\_alpha" $\mapsto$ (off,\,size)\,\}}};
+\node[smbox, align=center, line width=0.8pt] (consume) at (6, 0.5) {\texttt{prepareQuantParams()} \emph{(consumer)} \\ \texttt{GET\_WS\_PTR(float const*,} \\ \texttt{w4a8\_alpha)} $\Rightarrow$ valid \texttt{float*}};
+\node[box, align=center, line width=0.6pt] (assert) at (6, -3.5) {\texttt{cutlass\_fused\_moe\_kernels.cuh:4530} \\ \texttt{TLLM\_CHECK(quant\_1 \&\& quant\_2)} $\;\Rightarrow\;$ passes};
+\node[draw, dotted, fit=(alloc)(cascade), inner sep=10pt] (gpwbody) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]gpwbody.north west) {\texttt{GemmProfilerBackend::getProfilerWorkspaces()}};
+\node[draw, dashed, fit=(prep)(gpwbody)(wsmap)(consume), inner sep=14pt] (backend) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=3pt]backend.north west) {\texttt{GemmProfilerBackend} \emph{(autotune-only path)}};
+\draw[->] (tune) -- (prep) node[edgelbl, midway, right] {\texttt{tuner.choose\_one}};
+\draw[->] (prep.east) -- (alloc.west) node[edgelbl, midway, above] {1.~size workspace};
+\draw[->, line width=0.8pt] (alloc) -- (cascade) node[edgelbl, midway, right] {boolean cascade};
+\draw[->, line width=0.8pt] (cascade.east) -- (wsmap.south west) node[edgelbl, pos=0.55, sloped, above] {\texttt{ADD(w4a8\_alpha)}};
+\draw[->, line width=0.8pt] (wsmap) -- (consume) node[edgelbl, midway, right] {\texttt{GET\_WS\_PTR} $\Rightarrow$ valid ptr};
+\draw[->, line width=0.8pt] (consume) -- (assert) node[edgelbl, midway, right] {pass \texttt{quant\_1}, \texttt{quant\_2}};
+\end{tikzpicture}
+</script>
+<div class="caption"><b>Figure 2.</b> Post-fix state. Adding <code>kUINT8</code> alongside <code>kINT4</code> at all three sites in <code>getProfilerWorkspaces()</code> lets the W4A8 cascade evaluate to <code>true</code>, so <code>ADD(w4a8_alpha)</code> registers a real <code>num_experts_per_node</code>-sized buffer and <code>prepareQuantParams()</code>'s <code>GET_WS_PTR</code> returns the valid pointer that the <code>quant_1 &amp;&amp; quant_2</code> assertion at <code>cutlass_fused_moe_kernels.cuh:4530</code> requires.</div>
+</div>
 
 [^note-a]: Note (a). *4-bit two's complement* means you have 1 sign bit and 3 magnitude bits. A simple way to think of it is that setting each bit contributes the corresponding integer to the overall sum in this array: `[-8, 4, 2, 1]`, where `-8` is referred to as the "minimum representable value". An occasionally useful property of this format is that you can apply the composition of the bitwise-not function and plus-one function to negate any number: `3 = 0b0011`; `(~)(0b0011) = 0b1100`; `(+1)(0b1100) = 0b1101 = -3`; and applying the same composition again yields `0b0011 = 3`.
 
