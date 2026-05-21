@@ -130,6 +130,19 @@ mjx-container[display="true"],
   margin: 1em 0 !important;
 }
 
+.tikz-figure {
+  text-align: center;
+  margin: 2em 0;
+  overflow-x: auto;
+}
+.tikz-figure svg {
+  max-width: 100%;
+  height: auto;
+}
+@media (prefers-color-scheme: dark) {
+  .tikz-figure svg { filter: invert(0.92) hue-rotate(180deg); }
+}
+
 /* Rouge syntax highlighting — monochrome, arxiv-style */
 .highlight, .highlight * { color: inherit; }
 .highlight .k, .highlight .kd, .highlight .kn,

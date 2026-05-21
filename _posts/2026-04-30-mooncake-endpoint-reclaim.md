@@ -3,39 +3,35 @@ layout: post
 title: 'Mooncake''s RDMA QP Leak: A Drain-Coupling Pathology'
 ---
 
-```mermaid
-flowchart TB
-  subgraph ctx["RdmaContext (one per NIC)"]
-    direction TB
-    miss["RdmaContext::endpoint(peer)<br/>cache-miss path"]
-
-    subgraph store["EndpointStore"]
-      direction LR
-      map["endpoint_map_<br/><i>active cache</i>"]
-      wait["waiting_list_<br/><i>quiescing — QPs still held</i>"]
-      map -- "evict / delete" --> wait
-    end
-
-    mon["WorkerPool::monitorWorker<br/>1 Hz tick, NUMA-pinned"]
-
-    miss -- "1. insertEndpoint" --> map
-    miss -. "2. reclaimEndpoint<br/>(only pre-fix caller)" .-> wait
-    mon == "FIX: reclaimEndpoints" ==> wait
-  end
-
-  nic[("NIC hardware QP pool<br/>~64K slots, finite")]
-
-  map -- "ibv_create_qp × num_qp_per_ep" --> nic
-  wait -- "dtor ⇒ ibv_destroy_qp" --> nic
-
-  fail["peer failure ⇒ misses stop ⇒ reclaim stops<br/>⇒ waiting_list_ grows unbounded<br/>⇒ NIC QP pool exhausts"]
-  miss -.-> fail
-
-  classDef hazard fill:#fee,stroke:#c00,color:#900
-  classDef ok fill:#efe,stroke:#080,color:#060
-  class fail hazard
-  class mon ok
-```
+<div class="tikz-figure">
+<script type="text/tikz">
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+\begin{tikzpicture}[
+  >={Stealth[length=2mm]},
+  font=\small,
+  box/.style={draw, align=center, inner sep=4pt, rounded corners=1pt},
+  edgelbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt},
+]
+\node[box] (miss) at (0, 4) {\texttt{RdmaContext::endpoint(peer)}};
+\node[box] (map) at (-3.2, 1.5) {\texttt{endpoint\_map\_}};
+\node[box] (wait) at (3.2, 1.5) {\texttt{waiting\_list\_}};
+\node[box, line width=0.8pt] (mon) at (8, -0.5) {\texttt{monitorWorker} \\[1pt] {\footnotesize 1\,Hz, NUMA-pinned}};
+\node[box, minimum width=85mm] (nic) at (0, -3.2) {NIC hardware QP pool ($\sim$64K slots, finite)};
+\node[box, dashed, align=left, font=\footnotesize] (fail) at (8.5, 4) {peer failure $\Rightarrow$ misses stop \\ $\Rightarrow$ reclaim stops \\ $\Rightarrow$ \texttt{waiting\_list\_} grows \\ $\Rightarrow$ NIC QP pool exhausts};
+\node[draw, dotted, fit=(map)(wait), inner sep=10pt] (store) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=2pt]store.north west) {EndpointStore};
+\node[draw, dashed, fit=(miss)(store)(mon), inner sep=8pt] (ctx) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=2pt]ctx.north west) {RdmaContext (one per NIC)};
+\draw[->] (miss) -- (map) node[edgelbl, midway, sloped] {1.~\texttt{insertEndpoint}};
+\draw[->, dashed] (miss) -- (wait) node[edgelbl, midway, sloped] {2.~\texttt{reclaimEndpoint}};
+\draw[->] (map) -- (wait) node[edgelbl, midway] {evict / delete};
+\draw[->, line width=0.8pt] (mon) to[bend right=10] node[edgelbl, midway, sloped] {fix: \texttt{reclaimEndpoints}} (wait);
+\draw[->] (map.south) -- (map.south |- nic.north) node[edgelbl, midway] {\texttt{ibv\_create\_qp}};
+\draw[->] (wait.south) -- (wait.south |- nic.north) node[edgelbl, midway] {dtor: \texttt{ibv\_destroy\_qp}};
+\draw[->, dotted] (miss.east) -- (fail.west);
+\end{tikzpicture}
+</script>
+</div>
 
 Mooncake is the production serving platform for Moonshot AI's[^moonshot] Kimi.[^kimi] Its Transfer Engine handles Remote Direct Memory Access (RDMA) data movement between prefill and decode clusters. One `RdmaContext` exists per NIC. Each `RdmaContext` owns an `EndpointStore`: a software cache of `RdmaEndPoint` objects keyed on peer Network Interface Controller (NIC) path, bounded in size by `max_endpoints`. Each `RdmaEndPoint` allocates `num_qp_per_ep` Queue Pairs (QPs) at construction with `ibv_create_qp`, and releases them with `ibv_destroy_qp` from its destructor.[^rdma]
 

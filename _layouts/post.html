@@ -4,14 +4,5 @@ layout: default
 <h1>{{ page.title }}</h1>
 <p class="date">{{ page.date | date: "%B %d, %Y" }}</p>
 {{ content }}
-<script type="module">
-  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-  document.querySelectorAll('.language-mermaid').forEach((node) => {
-    const div = document.createElement('div');
-    div.className = 'mermaid';
-    div.textContent = node.textContent.trim();
-    node.replaceWith(div);
-  });
-  mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
-  mermaid.run();
-</script>
+<link rel="stylesheet" type="text/css" href="https://tikzjax.com/v1/fonts.css">
+<script src="https://tikzjax.com/v1/tikzjax.js"></script>
