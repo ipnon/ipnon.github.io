@@ -1,6 +1,6 @@
 ---
 layout: post
-title: 'Mooncake''s RDMA QP Leak: Drain-Coupling Pathology'
+title: 'Drain-Coupling Leaks Mooncake''s RDMA QPs Under Peer Failure'
 ---
 
 <div class="tikz-figure">

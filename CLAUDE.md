@@ -6,18 +6,19 @@ This file is loaded automatically by Claude Code whenever a file under `ccs1112.
 
 ## Post titles
 
-Two directives, both load-bearing:
+Three directives, all load-bearing:
 
-- **Concise.** Drop articles (`A`, `An`, `The`) and verbs of attribution (`Crashes`, `Causes`, `Breaks`). Strip every word the title can do without.
+- **Concise.** Drop articles (`A`, `An`, `The`). Strip every word the title can do without.
 - **Precise.** Name the project, name the subsystem if it isn't obvious from the project, and name the bug at its categorical level (the root-cause pathology), not just the surface symptom.
+- **Full sentence.** The title must be a grammatically complete sentence with a subject, a verb, and an object — not a noun phrase with a colon-subtitle. The reader should be able to read the title aloud and have it stand on its own.
 
-Canonical shape: `<Project>'s <Symptom>: <Root-cause pathology>`. The subtitle is the noun phrase a peer would use to classify the bug, not a restatement of the symptom. Use the en-dash (`–`) for compound modifiers (`Allocator–Consumer`, `Forward–Step`), not a hyphen.
+Canonical shape: `<Root-cause pathology> <action verb> <Project's affected subsystem>`. The pathology is the subject of the sentence; the verb is what it does to the project (`Breaks`, `Crashes`, `Leaks`, `Stalls`, `Corrupts`); the object names the specific subsystem. Use the en-dash (`–`) for compound modifiers (`Allocator–Consumer`, `Forward–Step`), not a hyphen. Title case throughout.
 
 Examples that fit the convention:
 
-- `Mooncake's RDMA QP Leak: Drain-Coupling Pathology`
-- `FlashInfer W4A8 Autotune: Allocator–Consumer Mismatch`
-- `Mamba2's Forward–Step Divergence: D-Parameter Shape Mismatch`
+- `Drain-Coupling Leaks Mooncake's RDMA QPs Under Peer Failure`
+- `Allocator–Consumer Mismatch Crashes FlashInfer's W4A8 Autotune`
+- `D-Parameter Shape Mismatch Breaks Mamba2's Forward–Step Parity`
 
 ## Hero diagrams
 
