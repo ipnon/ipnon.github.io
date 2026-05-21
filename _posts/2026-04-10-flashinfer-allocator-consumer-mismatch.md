@@ -13,7 +13,7 @@ title: 'Allocator–Consumer Mismatch Crashes FlashInfer''s W4A8 Autotune'
   smbox/.style={box, font=\footnotesize},
   edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\useasboundingbox (-11, -6) rectangle (15, 6);
+\useasboundingbox (-11, -6) rectangle (18, 6);
 \node[smbox, align=center] (tune) at (-8.5, 4.5) {\texttt{with autotune():} \\ \emph{tactic search}};
 \node[smbox, align=center] (prep) at (-8.5, 0.5) {\texttt{GemmProfilerBackend} \\ \texttt{::prepare()}};
 \node[smbox, dashed, align=left] (alloc) at (-2, 4.5) {\texttt{getProfilerWorkspaces()} \emph{(allocator)} \\ \texttt{wtype == kUINT8}, \texttt{mGroupSize > 0} \\[2pt]
@@ -247,7 +247,7 @@ A separate issue is that a dispatch table has measurable overhead, and FlashInfe
   smbox/.style={box, font=\footnotesize},
   edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\useasboundingbox (-11, -6) rectangle (15, 6);
+\useasboundingbox (-11, -6) rectangle (18, 6);
 \node[smbox, align=center] (tune) at (-8.5, 4.5) {\texttt{with autotune():} \\ \emph{tactic search}};
 \node[smbox, align=center] (prep) at (-8.5, 0.5) {\texttt{GemmProfilerBackend} \\ \texttt{::prepare()}};
 \node[smbox, line width=0.8pt, align=left] (alloc) at (-2, 4.5) {\texttt{getProfilerWorkspaces()} \emph{(allocator)} \\ \texttt{wtype == kUINT8}, \texttt{mGroupSize > 0} \\[2pt]

@@ -65,6 +65,7 @@ Place each figure inside:
 - Container groupings: `fit=` with `dotted` (inner store) and `dashed` (outer context) outlines, labeled at the inside of `north west`.
 - Math symbols (`$\Rightarrow$`, `$\sim$`) must be in math mode.
 - **No overlapping**: spread nodes generously, prefer `above`/`below`/`left`/`right` positioning over `sloped` where one edge is roughly horizontal or vertical, route long edges with `to[bend ...]` to clear other nodes, and lay out the picture wide so `width: 100%` in CSS expands it to fill the column without losing proportion.
+- **Bounding box must enclose all visible content.** `\useasboundingbox` defines the SVG viewBox; with `width: 100%` and `overflow: visible` on the SVG, anything drawn past the viewBox renders outside the SVG element and gets clipped at the column edge (no scrollbar, no warning — it just disappears). Hazard stickies, edge labels with multiple `\texttt{}` runs, and arrowheads are the usual offenders. Rule of thumb: for a hazard sticky centered at `(x_c, y_c)` with multi-line `\footnotesize` text, the box can be 6–8 cm wide once a couple of lines use `\texttt{}` runs, so set the bounding box's right edge to at least `x_c + 5`. After landing a figure, always reload the rendered post and check the right and bottom edges; if anything is cut off, expand the rectangle.
 
 ### TikZJax library notes
 

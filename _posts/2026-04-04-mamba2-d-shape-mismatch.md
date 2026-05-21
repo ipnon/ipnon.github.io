@@ -13,7 +13,7 @@ title: 'D-Parameter Shape Mismatch Breaks Mamba2''s Forward–Step Parity'
   smbox/.style={box, font=\footnotesize},
   edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\useasboundingbox (-12, -7) rectangle (16, 5);
+\useasboundingbox (-12, -7) rectangle (18, 5);
 \node[smbox] (fwd) at (-8.5, 3.5) {\texttt{forward()} \\ \emph{mamba2.py:191}};
 \node[smbox, dashed] (s1) at (0, 3.5) {\texttt{step()} path 1 \\ \emph{mamba2.py:319, \texttt{selective\_state\_update is None}}};
 \node[smbox, dashed] (s2) at (8.5, 3.5) {\texttt{step()} path 2 \\ \emph{mamba2.py:327, else branch}};
@@ -133,7 +133,7 @@ The fix landed in [PR #893](https://github.com/state-spaces/mamba/pull/893).[^pr
   smbox/.style={box, font=\footnotesize},
   edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\useasboundingbox (-12, -7) rectangle (16, 5);
+\useasboundingbox (-12, -7) rectangle (18, 5);
 \node[smbox] (fwd) at (-8.5, 3.5) {\texttt{forward()} \\ \emph{mamba2.py:191}};
 \node[smbox, line width=0.8pt] (s1) at (0, 3.5) {\texttt{step()} path 1 \\ \emph{mamba2.py:319, \texttt{selective\_state\_update is None}}};
 \node[smbox, line width=0.8pt] (s2) at (8.5, 3.5) {\texttt{step()} path 2 \\ \emph{mamba2.py:327, else branch}};
