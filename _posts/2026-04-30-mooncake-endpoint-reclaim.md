@@ -10,25 +10,56 @@ title: 'Mooncake''s RDMA QP Leak: A Drain-Coupling Pathology'
   >={Stealth[length=2mm]},
   font=\small,
   box/.style={draw, align=center, inner sep=4pt, rounded corners=1pt},
-  edgelbl/.style={font=\footnotesize, fill=white, inner sep=1.5pt},
+  smbox/.style={box, font=\footnotesize},
+  edgelbl/.style={font=\scriptsize, fill=white, inner sep=1.5pt},
+  edgelblc/.style={edgelbl, align=center},
 ]
-\node[box] (miss) at (0, 4) {\texttt{RdmaContext::endpoint(peer)}};
-\node[box] (map) at (-3.2, 1.5) {\texttt{endpoint\_map\_}};
-\node[box] (wait) at (3.2, 1.5) {\texttt{waiting\_list\_}};
-\node[box, line width=0.8pt] (mon) at (8, -0.5) {\texttt{monitorWorker} \\[1pt] {\footnotesize 1\,Hz, NUMA-pinned}};
-\node[box, minimum width=85mm] (nic) at (0, -3.2) {NIC hardware QP pool ($\sim$64K slots, finite)};
-\node[box, dashed, align=left, font=\footnotesize] (fail) at (8.5, 4) {peer failure $\Rightarrow$ misses stop \\ $\Rightarrow$ reclaim stops \\ $\Rightarrow$ \texttt{waiting\_list\_} grows \\ $\Rightarrow$ NIC QP pool exhausts};
-\node[draw, dotted, fit=(map)(wait), inner sep=10pt] (store) {};
-\node[font=\footnotesize, anchor=south west] at ([xshift=2pt]store.north west) {EndpointStore};
-\node[draw, dashed, fit=(miss)(store)(mon), inner sep=8pt] (ctx) {};
+\node[smbox, align=left] (upstream) at (0, 8.2) {
+  SGLang PD-disagg: \texttt{batchTransferSync()} fails $\Rightarrow$ Python marks session failed; \\
+  \texttt{handle\_map\_} stays cached, \texttt{closeSegment} is no-op $\Rightarrow$ peer's insertions stop
+};
+\node[smbox] (del) at (-5.5, 5) {\texttt{deleteEndpoint(peer)} \\ \emph{error path}};
+\node[smbox] (miss) at (0, 5) {\texttt{RdmaContext::endpoint(peer)} \\ \emph{cache-miss path}};
+\node[smbox, line width=0.8pt] (mon) at (5.5, 5) {\texttt{WorkerPool::monitorWorker} \\ \emph{1\,Hz heartbeat, NUMA-pinned} \\ {\scriptsize \texttt{worker\_pool.cpp:447--451}}};
+\node[box] (map) at (-3, 2) {
+  \texttt{endpoint\_map\_} \\
+  {\footnotesize \texttt{unordered\_map<string,}} \\
+  {\footnotesize \texttt{shared\_ptr<RdmaEndPoint>>}}
+};
+\node[box] (wait) at (3, 2) {
+  \texttt{waiting\_list\_} \\
+  {\footnotesize \texttt{unordered\_set<}} \\
+  {\footnotesize \texttt{shared\_ptr<RdmaEndPoint>>}} \\
+  {\footnotesize + atomic \texttt{waiting\_list\_len\_}}
+};
+\node[box, minimum width=120mm] (nic) at (0, -2) {
+  NIC hardware QP pool ($\sim$64K slots) \\
+  {\footnotesize finite, NIC-scope; exhaustion blast radius is the whole NIC, not the failing peer}
+};
+\node[box, dashed, align=left, font=\footnotesize] (fail) at (9.5, 2) {
+  Pre-fix failure mode: \\
+  \quad inserts stall (peer dead) \\
+  \quad evict/delete keep firing \\
+  \quad reclaim never invoked \\
+  \quad \texttt{waiting\_list\_} grows \\
+  \quad 1118 evicts $\Rightarrow$ \\
+  \quad\quad {>}20K QPs per NIC \\
+  \quad \texttt{ibv\_create\_qp} returns \\
+  \quad\quad \texttt{ENOMEM} NIC-wide
+};
+\node[draw, dotted, fit=(map)(wait), inner sep=12pt] (store) {};
+\node[font=\footnotesize, anchor=south west] at ([xshift=2pt]store.north west) {EndpointStore (FIFO or SIEVE), \texttt{RWSpinlock endpoint\_map\_lock\_}};
+\node[draw, dashed, fit=(del)(miss)(mon)(store), inner sep=12pt] (ctx) {};
 \node[font=\footnotesize, anchor=south west] at ([xshift=2pt]ctx.north west) {RdmaContext (one per NIC)};
+\draw[->, dotted] (upstream.south) -- (miss.north);
+\draw[->] (del.south) -- (store.north west) node[edgelbl, midway, sloped] {moves entry to \texttt{waiting\_list\_}};
 \draw[->] (miss) -- (map) node[edgelbl, midway, sloped] {1.~\texttt{insertEndpoint}};
-\draw[->, dashed] (miss) -- (wait) node[edgelbl, midway, sloped] {2.~\texttt{reclaimEndpoint}};
-\draw[->] (map) -- (wait) node[edgelbl, midway] {evict / delete};
-\draw[->, line width=0.8pt] (mon) to[bend right=10] node[edgelbl, midway, sloped] {fix: \texttt{reclaimEndpoints}} (wait);
-\draw[->] (map.south) -- (map.south |- nic.north) node[edgelbl, midway] {\texttt{ibv\_create\_qp}};
-\draw[->] (wait.south) -- (wait.south |- nic.north) node[edgelbl, midway] {dtor: \texttt{ibv\_destroy\_qp}};
-\draw[->, dotted] (miss.east) -- (fail.west);
+\draw[->, dashed] (miss) -- (wait) node[edgelblc, midway, sloped] {2.~\texttt{reclaimEndpoint} \\ \emph{only pre-fix caller}};
+\draw[->] (map) -- (wait) node[edgelbl, midway] {evict (FIFO/SIEVE)};
+\draw[->, line width=0.8pt] (mon) to[bend right=10] node[edgelblc, midway, sloped] {\textbf{fix}: \texttt{reclaimEndpoints} \\ \emph{every 1\,s}} (wait);
+\draw[->] (map.south) -- (map.south |- nic.north) node[edgelbl, midway] {\texttt{ibv\_create\_qp} $\times$ \texttt{num\_qp\_per\_ep}};
+\draw[->] (wait.south) -- (wait.south |- nic.north) node[edgelbl, midway] {dtor $\Rightarrow$ \texttt{ibv\_destroy\_qp}};
+\draw[->, dotted] (wait.east) to[bend left=15] (fail.west);
 \end{tikzpicture}
 </script>
 </div>
