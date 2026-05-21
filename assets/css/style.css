@@ -137,9 +137,9 @@ mjx-container[display="true"],
 }
 .tikz-figure svg {
   display: block;
-  width: 100% !important;
+  width: 90% !important;
   height: auto !important;
-  max-width: 100%;
+  max-width: 90%;
   margin: 0 auto;
 }
 .tikz-figure .caption {
