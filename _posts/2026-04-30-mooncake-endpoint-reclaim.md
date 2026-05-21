@@ -13,7 +13,6 @@ title: 'Drain-Coupling Leaks Mooncake''s RDMA QPs Under Peer Failure'
   smbox/.style={box, font=\footnotesize},
   edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\useasboundingbox (-9.5, -5.5) rectangle (15.5, 5.5);
 \node[smbox] (del)  at (-7, 4) {\texttt{deleteEndpoint(peer)} \\ \emph{error path}};
 \node[smbox] (miss) at ( 0, 4) {\texttt{RdmaContext::endpoint(peer)} \\ \emph{cache-miss path}};
 \node[smbox] (mon)  at ( 7, 4) {\texttt{monitorWorker} \\ \emph{1\,Hz tick, no reclaim call}};
@@ -138,7 +137,6 @@ The first fits when destruction must be deferred. Mooncake has outstanding raw p
   smbox/.style={box, font=\footnotesize},
   edgelbl/.style={font=\scriptsize, fill=white, inner sep=2pt},
 ]
-\useasboundingbox (-9.5, -5.5) rectangle (15.5, 5.5);
 \node[smbox] (del)  at (-7, 4) {\texttt{deleteEndpoint(peer)} \\ \emph{error path}};
 \node[smbox] (miss) at ( 0, 4) {\texttt{RdmaContext::endpoint(peer)} \\ \emph{cache-miss path}};
 \node[smbox, line width=0.8pt] (mon) at ( 7, 4) {\texttt{monitorWorker} \\ \emph{1\,Hz tick, calls \texttt{reclaimEndpoints}}};

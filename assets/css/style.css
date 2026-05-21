@@ -136,9 +136,11 @@ mjx-container[display="true"],
   overflow-x: auto;
 }
 .tikz-figure svg {
-  width: 100%;
-  height: auto;
+  display: block;
+  width: 100% !important;
+  height: auto !important;
   max-width: 100%;
+  margin: 0 auto;
 }
 .tikz-figure .caption {
   font-size: 0.9rem;
