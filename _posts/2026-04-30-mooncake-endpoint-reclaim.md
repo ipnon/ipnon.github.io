@@ -3,6 +3,40 @@ layout: post
 title: 'Mooncake''s RDMA QP Leak: A Drain-Coupling Pathology'
 ---
 
+```mermaid
+flowchart TB
+  subgraph ctx["RdmaContext (one per NIC)"]
+    direction TB
+    miss["RdmaContext::endpoint(peer)<br/>cache-miss path"]
+
+    subgraph store["EndpointStore"]
+      direction LR
+      map["endpoint_map_<br/><i>active cache</i>"]
+      wait["waiting_list_<br/><i>quiescing — QPs still held</i>"]
+      map -- "evict / delete" --> wait
+    end
+
+    mon["WorkerPool::monitorWorker<br/>1 Hz tick, NUMA-pinned"]
+
+    miss -- "1. insertEndpoint" --> map
+    miss -. "2. reclaimEndpoint<br/>(only pre-fix caller)" .-> wait
+    mon == "FIX: reclaimEndpoints" ==> wait
+  end
+
+  nic[("NIC hardware QP pool<br/>~64K slots, finite")]
+
+  map -- "ibv_create_qp × num_qp_per_ep" --> nic
+  wait -- "dtor ⇒ ibv_destroy_qp" --> nic
+
+  fail["peer failure ⇒ misses stop ⇒ reclaim stops<br/>⇒ waiting_list_ grows unbounded<br/>⇒ NIC QP pool exhausts"]
+  miss -.-> fail
+
+  classDef hazard fill:#fee,stroke:#c00,color:#900
+  classDef ok fill:#efe,stroke:#080,color:#060
+  class fail hazard
+  class mon ok
+```
+
 Mooncake is the production serving platform for Moonshot AI's[^moonshot] Kimi.[^kimi] Its Transfer Engine handles Remote Direct Memory Access (RDMA) data movement between prefill and decode clusters. One `RdmaContext` exists per NIC. Each `RdmaContext` owns an `EndpointStore`: a software cache of `RdmaEndPoint` objects keyed on peer Network Interface Controller (NIC) path, bounded in size by `max_endpoints`. Each `RdmaEndPoint` allocates `num_qp_per_ep` Queue Pairs (QPs) at construction with `ibv_create_qp`, and releases them with `ibv_destroy_qp` from its destructor.[^rdma]
 
 QPs are a finite hardware resource. Each NIC has a fixed pool of QP slots (~64K on modern Mellanox/NVIDIA hardware). Software-side endpoint count and hardware-side QP count are coupled by the relation `qps_allocated = sum(num_qp_per_ep over live RdmaEndPoint instances)`. "Live" here means the C++ object has not been destructed. Equivalently, some `shared_ptr<RdmaEndPoint>` still has a reference count > 0.
